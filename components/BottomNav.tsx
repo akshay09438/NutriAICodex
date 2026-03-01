@@ -7,17 +7,17 @@ type Tab = "home" | "ate" | "smart" | "profile";
 const items: Array<{
   key: Tab;
   label: string;
-  href?: string;
+  href: string;
 }> = [
   { key: "home", label: "home", href: "/home" },
   { key: "ate", label: "i ate", href: "/log-meal" },
   { key: "smart", label: "smart", href: "/smart" },
-  { key: "profile", label: "profile" },
+  { key: "profile", label: "profile", href: "/profile" },
 ];
 
 export default function BottomNav({
   active,
-  onToast,
+  onToast: _onToast,
 }: {
   active: Tab;
   onToast?: (text: string) => void;
@@ -33,23 +33,10 @@ export default function BottomNav({
               : "border-[#D4D4D8] bg-white text-black"
           }`;
 
-          if (item.href) {
-            return (
-              <Link key={item.key} href={item.href} className={baseClass}>
-                {item.label}
-              </Link>
-            );
-          }
-
           return (
-            <button
-              key={item.key}
-              type="button"
-              className={baseClass}
-              onClick={() => onToast?.("Profile coming soon")}
-            >
+            <Link key={item.key} href={item.href} className={baseClass}>
               {item.label}
-            </button>
+            </Link>
           );
         })}
       </div>
