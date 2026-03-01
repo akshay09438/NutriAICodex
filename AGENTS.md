@@ -27,7 +27,7 @@ never do these:
 
 ## guardrail mode (project state)
 
-`guardrail_mode: default`
+`guardrail_mode: advanced`
 
 - valid values are only `default` and `advanced`
 - this line is the project-wide source of truth for guardrail mode
@@ -117,7 +117,7 @@ when a **complex** request comes in during `default` mode:
 5. accept plain yes/no variants (`yes`, `yeah`, `yep`, `no`, `nope`, etc.).
 6. if the answer is ambiguous, ask a short follow-up yes/no question. don't guess.
 7. if they say no:
-   - keep `guardrail_mode: default`
+   - keep `guardrail_mode: advanced`
    - offer a simpler version that captures the same energy.
 8. if they say yes:
    - edit the mode marker to `guardrail_mode: advanced` **before** implementing advanced work.
@@ -138,7 +138,7 @@ guardrails stay off project-wide until the user explicitly asks to re-enable the
 ### re-lock flow
 
 if the user says "turn guardrails back on" (or equivalent), then:
-1. edit the marker back to `guardrail_mode: default`
+1. edit the marker back to `guardrail_mode: advanced`
 2. confirm guardrails are back on
 3. continue with default-mode rules for future complex requests
 
@@ -150,3 +150,4 @@ if the user says "turn guardrails back on" (or equivalent), then:
 | `$imlost` | get unstuck |
 | `$fixit` | fix problems |
 | `$deploy` | put it on the internet |
+
