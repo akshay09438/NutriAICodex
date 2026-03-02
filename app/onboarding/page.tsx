@@ -3,14 +3,51 @@
 import { useMemo, useState } from "react";
 import { Button, Card, CardBody, Input } from "@heroui/react";
 import { useRouter } from "next/navigation";
-import {
-  calculateTargets,
-  type GoalType,
-  type LifestyleType,
-  type SexType,
-} from "@/lib/calculations";
+import type { GoalType, LifestyleType, SexType } from "@/lib/calculations";
 import { saveProfile, type DietType } from "@/lib/storage";
 import { formatInt } from "@/lib/utils";
+import type {
+  GoalPace,
+  StepRange,
+  StrengthDays,
+  TargetDietLabel,
+  TargetGoalLabel,
+  TargetLifestyleLabel,
+  TargetSexLabel,
+  TargetsPlanInputs,
+  TargetsPlanV1,
+  TrainingType,
+} from "@/services/targets_v1";
+
+type OptionalStepRange = StepRange | "";
+type OptionalTrainingType = TrainingType | "";
+type OptionalStrengthDays = StrengthDays | "";
+type OptionalGoalPace = GoalPace | "";
+
+const LIFESTYLE_OPTIONS: Array<{ key: LifestyleType; label: TargetLifestyleLabel; hint: string }> = [
+  { key: "sedentary", label: "Mostly sitting", hint: "Desk work, rarely exercise" },
+  { key: "light", label: "Light movement", hint: "Walk around, occasional workout" },
+  { key: "active", label: "Gym / Active", hint: "Gym 3-5x per week" },
+  { key: "very_active", label: "Very active", hint: "Intense daily training" },
+];
+
+const GOAL_OPTIONS: Array<{ key: GoalType; label: TargetGoalLabel }> = [
+  { key: "lose", label: "Lose weight" },
+  { key: "maintain", label: "Stay fit" },
+  { key: "gain", label: "Gain muscle" },
+];
+
+const DIET_OPTIONS: Array<{ key: DietType; label: TargetDietLabel }> = [
+  { key: "veg", label: "Vegetarian" },
+  { key: "egg", label: "Eggetarian" },
+  { key: "nonveg", label: "Non-Vegetarian" },
+];
+
+const SEX_OPTIONS: Array<{ key: SexType; label: TargetSexLabel }> = [
+  { key: "male", label: "Male" },
+  { key: "female", label: "Female" },
+  { key: "other", label: "Prefer not to say" },
+];
 
 export default function OnboardingPage() {
   const router = useRouter();
@@ -28,9 +65,17 @@ export default function OnboardingPage() {
   const [goal, setGoal] = useState<GoalType>("maintain");
   const [dietType, setDietType] = useState<DietType | "">("");
 
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [stepsRange, setStepsRange] = useState<OptionalStepRange>("");
+  const [trainingType, setTrainingType] = useState<OptionalTrainingType>("");
+  const [strengthDays, setStrengthDays] = useState<OptionalStrengthDays>("");
+  const [goalPace, setGoalPace] = useState<OptionalGoalPace>("");
+
   const [editGoals, setEditGoals] = useState(false);
   const [manualCalories, setManualCalories] = useState("");
   const [manualProtein, setManualProtein] = useState("");
+  const [targetsPlan, setTargetsPlan] = useState<TargetsPlanV1 | null>(null);
+  const [targetsLoading, setTargetsLoading] = useState(false);
   const [formError, setFormError] = useState("");
 
   const derivedHeightCm = useMemo(() => {
@@ -45,20 +90,6 @@ export default function OnboardingPage() {
     return Math.max(1, Math.round(d / budgetMealsCount));
   }, [dailyBudget, budgetMealsCount]);
 
-  const calculated = useMemo(() => {
-    const ageNum = Number(age);
-    const weightNum = Number(weightKg);
-    if (!ageNum || !weightNum || !derivedHeightCm || !biologicalSex || !lifestyle) return null;
-    return calculateTargets({
-      age: ageNum,
-      heightCm: derivedHeightCm,
-      weightKg: weightNum,
-      biologicalSex,
-      lifestyle,
-      goal,
-    });
-  }, [age, weightKg, derivedHeightCm, biologicalSex, lifestyle, goal]);
-
   const canStep1 = Number(dailyBudget) > 0;
   const canStep2 =
     Number(age) > 0 &&
@@ -68,10 +99,84 @@ export default function OnboardingPage() {
     !!lifestyle &&
     !!dietType;
 
+  const displayedCalories =
+    manualCalories || (targetsPlan ? formatInt(targetsPlan.improved.calories_target) : "");
+  const displayedProtein =
+    manualProtein || (targetsPlan ? formatInt(targetsPlan.improved.protein_optimal_g) : "");
+
+  const showAdvancedSection = lifestyle !== "" && lifestyle !== "sedentary";
+
+  const handleTrainingTypeChange = (value: string) => {
+    const nextValue = value as OptionalTrainingType;
+    setTrainingType(nextValue);
+    if (!nextValue || nextValue === "none") {
+      setStrengthDays("");
+    }
+  };
+
+  const handleGoalChange = (value: string) => {
+    const nextGoal = value as GoalType;
+    setGoal(nextGoal);
+    if (nextGoal !== "lose") {
+      setGoalPace("");
+    }
+  };
+
+  const handleContinueToTargets = async () => {
+    if (!canStep2) {
+      setFormError("fill age, weight, height, sex, lifestyle, and diet type to continue.");
+      return;
+    }
+
+    setTargetsLoading(true);
+    setFormError("");
+
+    try {
+      const payload = buildTargetsRequest({
+        age: Number(age),
+        height_cm: derivedHeightCm,
+        weight_kg: Number(weightKg),
+        biologicalSex,
+        lifestyle,
+        goal,
+        dietType,
+        stepsRange,
+        trainingType,
+        strengthDays,
+        goalPace,
+      });
+
+      const response = await fetch("/onboarding/compute-targets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const error = (await response.json()) as { error?: string };
+        throw new Error(error.error || "Could not calculate targets.");
+      }
+
+      const plan = (await response.json()) as TargetsPlanV1;
+      setTargetsPlan(plan);
+      setManualCalories("");
+      setManualProtein("");
+      setStep(3);
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Could not calculate targets.");
+    } finally {
+      setTargetsLoading(false);
+    }
+  };
+
   const complete = () => {
-    if (!calculated || !biologicalSex || !lifestyle || !dietType) return;
-    const finalCalories = Number(manualCalories) || calculated.dailyCalorieGoal;
-    const finalProtein = Number(manualProtein) || calculated.dailyProteinGoal;
+    if (!targetsPlan || !biologicalSex || !lifestyle || !dietType) return;
+
+    const finalCalories = Number(manualCalories) || targetsPlan.improved.calories_target;
+    const finalProtein = Number(manualProtein) || targetsPlan.improved.protein_optimal_g;
+    const preActivitySnackBudget =
+      preActivitySnack === "yes" ? Math.max(10, Math.round(suggestedMealBudget * 0.35)) : 0;
+
     saveProfile({
       age: Number(age),
       height_cm: derivedHeightCm,
@@ -84,9 +189,18 @@ export default function OnboardingPage() {
       meal_budget: Number(suggestedMealBudget || 0),
       budget_meals_count: budgetMealsCount,
       has_pre_activity_snack: preActivitySnack === "yes",
-      pre_activity_snack_budget: 0,
+      pre_activity_snack_budget: preActivitySnackBudget,
       daily_calorie_goal: finalCalories,
       daily_protein_goal: finalProtein,
+      daily_targets_plan: {
+        ...targetsPlan,
+        improved: {
+          ...targetsPlan.improved,
+          calories_target: finalCalories,
+          protein_optimal_g: finalProtein,
+          protein_per_meal_g: Math.round(finalProtein / 3),
+        },
+      },
       setup_complete: true,
       created_at: new Date().toISOString(),
     });
@@ -180,6 +294,7 @@ export default function OnboardingPage() {
                 onValueChange={setWeightKg}
               />
             </div>
+
             <LabeledInput
               label="height (5'10 or total inches)"
               placeholder="5'10 or 70"
@@ -193,25 +308,27 @@ export default function OnboardingPage() {
               label="biological sex"
               value={biologicalSex}
               onChange={(v) => setBiologicalSex(v as SexType)}
-              options={[
-                { key: "male", label: "Male" },
-                { key: "female", label: "Female" },
-                { key: "other", label: "Prefer not to say" },
-              ]}
+              options={SEX_OPTIONS.map((option) => ({ key: option.key, label: option.label }))}
             />
 
             <p className="text-xs uppercase tracking-[0.5px] text-black">your lifestyle</p>
             <p className="text-xs text-black">This affects how much protein you need.</p>
             <div className="grid grid-cols-2 gap-2">
-              {[
-                { key: "sedentary", label: "Mostly sitting", hint: "Desk work, rarely exercise" },
-                { key: "light", label: "Light movement", hint: "Walk around, occasional workout" },
-                { key: "active", label: "Gym / Active", hint: "Gym 3-5x per week" },
-                { key: "very_active", label: "Very active", hint: "Intense daily training" },
-              ].map((item) => (
+              {LIFESTYLE_OPTIONS.map((item) => (
                 <button
                   key={item.key}
-                  onClick={() => setLifestyle(item.key as LifestyleType)}
+                  type="button"
+                  onClick={() => {
+                    setLifestyle(item.key);
+                    if (item.key === "sedentary") {
+                      setAdvancedOpen(false);
+                      setStepsRange("");
+                      setTrainingType("");
+                      setStrengthDays("");
+                    } else {
+                      setAdvancedOpen(true);
+                    }
+                  }}
                   className={`rounded-xl border p-3 text-left ${
                     lifestyle === item.key
                       ? "border-black bg-black text-white"
@@ -229,24 +346,90 @@ export default function OnboardingPage() {
             <PillGroup
               label="your goal"
               value={goal}
-              onChange={(v) => setGoal(v as GoalType)}
-              options={[
-                { key: "lose", label: "Lose weight" },
-                { key: "maintain", label: "Stay fit" },
-                { key: "gain", label: "Gain muscle" },
-              ]}
+              onChange={handleGoalChange}
+              options={GOAL_OPTIONS.map((option) => ({ key: option.key, label: option.label }))}
             />
 
             <PillGroup
               label="diet type"
               value={dietType}
               onChange={(v) => setDietType(v as DietType)}
-              options={[
-                { key: "veg", label: "Vegetarian" },
-                { key: "egg", label: "Eggetarian" },
-                { key: "nonveg", label: "Non-Vegetarian" },
-              ]}
+              options={DIET_OPTIONS.map((option) => ({ key: option.key, label: option.label }))}
             />
+
+            {showAdvancedSection ? (
+              <Card className="rounded-2xl border border-[#D4D4D8] bg-[#FAFAFA] shadow-none">
+                <CardBody className="space-y-4 p-4">
+                  <button
+                    type="button"
+                    onClick={() => setAdvancedOpen((open) => !open)}
+                    className="flex w-full items-start justify-between gap-3 text-left"
+                  >
+                    <div>
+                      <p className="text-sm font-semibold">Advanced (better calculation) <span className="text-[#525252]">(optional)</span></p>
+                      <p className="text-xs text-[#525252]">Add these for a more accurate estimate.</p>
+                    </div>
+                    <span className="text-xs uppercase tracking-[0.14em] text-[#525252]">
+                      {advancedOpen ? "hide" : "show"}
+                    </span>
+                  </button>
+
+                  {advancedOpen ? (
+                    <div className="space-y-4">
+                      <PillGroup
+                        label="daily steps (better calculation)"
+                        value={stepsRange}
+                        onChange={(v) => setStepsRange(v as OptionalStepRange)}
+                        options={[
+                          { key: "0_3k", label: "0-3k" },
+                          { key: "3_6k", label: "3-6k" },
+                          { key: "6_10k", label: "6-10k" },
+                          { key: "10k_plus", label: "10k+" },
+                        ]}
+                      />
+
+                      <PillGroup
+                        label="training type (better calculation)"
+                        value={trainingType}
+                        onChange={handleTrainingTypeChange}
+                        options={[
+                          { key: "none", label: "None" },
+                          { key: "cardio", label: "Cardio" },
+                          { key: "strength", label: "Strength" },
+                          { key: "both", label: "Both" },
+                        ]}
+                      />
+
+                      {trainingType && trainingType !== "none" ? (
+                        <PillGroup
+                          label="strength days/week (better calculation)"
+                          value={strengthDays}
+                          onChange={(v) => setStrengthDays(v as OptionalStrengthDays)}
+                          options={[
+                            { key: "0_1", label: "0-1" },
+                            { key: "2_3", label: "2-3" },
+                            { key: "4_6", label: "4-6" },
+                          ]}
+                        />
+                      ) : null}
+
+                      {goal === "lose" ? (
+                        <PillGroup
+                          label="goal pace (better calculation)"
+                          value={goalPace}
+                          onChange={(v) => setGoalPace(v as OptionalGoalPace)}
+                          options={[
+                            { key: "easy", label: "Easy" },
+                            { key: "steady", label: "Steady" },
+                            { key: "aggressive", label: "Aggressive" },
+                          ]}
+                        />
+                      ) : null}
+                    </div>
+                  ) : null}
+                </CardBody>
+              </Card>
+            ) : null}
 
             <div className="grid grid-cols-2 gap-3 pt-2">
               <Button
@@ -257,14 +440,8 @@ export default function OnboardingPage() {
               </Button>
               <Button
                 className="h-[52px] rounded-xl border border-black bg-white text-black"
-                onPress={() => {
-                  if (!canStep2) {
-                    setFormError("fill age, weight, height, sex, lifestyle, and diet type to continue.");
-                    return;
-                  }
-                  setFormError("");
-                  setStep(3);
-                }}
+                isLoading={targetsLoading}
+                onPress={handleContinueToTargets}
               >
                 Continue
               </Button>
@@ -273,27 +450,55 @@ export default function OnboardingPage() {
           </section>
         ) : null}
 
-        {step === 3 && calculated ? (
+        {step === 3 && targetsPlan ? (
           <section className="space-y-4">
             <p className="text-xs uppercase tracking-[0.5px] text-black">step 3 of 3</p>
-            <h1 className="text-[28px] font-extrabold tracking-[-0.5px]">Your daily targets</h1>
-            <p className="text-[15px] leading-6 text-black">
-              Personalised for your routine and Indian dietary guidance.
-            </p>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h1 className="text-[28px] font-extrabold tracking-[-0.5px]">Your daily targets</h1>
+                <p className="text-[15px] leading-6 text-black">
+                  Personalised for your routine and Indian dietary guidance.
+                </p>
+              </div>
+              {targetsPlan.improved_used ? (
+                <span className="rounded-full border border-black px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-black">
+                  better calculation
+                </span>
+              ) : null}
+            </div>
 
             <SummaryCard
               icon="🔥"
               label="daily calories"
-              value={manualCalories || formatInt(calculated.dailyCalorieGoal)}
+              value={displayedCalories}
               suffix="kcal / day"
+              footnote={`Mode: ${targetsPlan.improved.calories_goal_mode.replace("_", " ")}`}
             />
             <SummaryCard
               icon="💪"
               label="daily protein"
-              value={manualProtein || formatInt(calculated.dailyProteinGoal)}
-              suffix="grams / day"
-              footnote={`Based on ICMR 2020 - ${lifestyle?.replace("_", " ")} lifestyle`}
+              value={displayedProtein}
+              suffix="optimal grams / day"
+              footnote={`Minimum ${targetsPlan.improved.protein_min_g}g • ${targetsPlan.improved.protein_per_meal_g}g per meal`}
             />
+            <Card className="rounded-2xl border border-[#D4D4D8] bg-white shadow-none">
+              <CardBody className="grid grid-cols-2 gap-3 p-5">
+                <div className="rounded-2xl border border-[#E5E7EB] bg-[#FAFAFA] p-4">
+                  <p className="text-[11px] uppercase tracking-[0.12em] text-[#737373]">protein minimum</p>
+                  <p className="mt-1 text-3xl font-extrabold tabular-nums text-black">
+                    {formatInt(targetsPlan.improved.protein_min_g)}g
+                  </p>
+                  <p className="text-xs text-[#525252]">good day target</p>
+                </div>
+                <div className="rounded-2xl border border-[#E5E7EB] bg-[#FAFAFA] p-4">
+                  <p className="text-[11px] uppercase tracking-[0.12em] text-[#737373]">protein optimal</p>
+                  <p className="mt-1 text-3xl font-extrabold tabular-nums text-black">
+                    {formatInt(targetsPlan.improved.protein_optimal_g)}g
+                  </p>
+                  <p className="text-xs text-[#525252]">best results target</p>
+                </div>
+              </CardBody>
+            </Card>
             <SummaryCard
               icon="Rs"
               label="daily budget"
@@ -301,32 +506,47 @@ export default function OnboardingPage() {
               suffix={`per day - Rs${suggestedMealBudget} per meal`}
             />
 
-            <button className="text-xs text-black underline" onClick={() => setEditGoals((v) => !v)}>
+            <div className="rounded-2xl border border-[#D4D4D8] bg-[#FAFAFA] p-4 text-sm text-[#525252]">
+              <p>Good day: hit Minimum. Best results: aim for Optimal.</p>
+              {targetsPlan.explanations.map((line) => (
+                <p key={line} className="mt-2">{line}</p>
+              ))}
+            </div>
+
+            <button type="button" className="text-xs text-black underline" onClick={() => setEditGoals((v) => !v)}>
               {editGoals ? "Hide manual adjust" : "Adjust manually"}
             </button>
             {editGoals ? (
               <div className="grid grid-cols-2 gap-3">
                 <LabeledInput
                   label="calorie goal"
-                  placeholder="2140"
+                  placeholder={String(targetsPlan.improved.calories_target)}
                   value={manualCalories}
                   onValueChange={setManualCalories}
                 />
                 <LabeledInput
                   label="protein goal"
-                  placeholder="91"
+                  placeholder={String(targetsPlan.improved.protein_optimal_g)}
                   value={manualProtein}
                   onValueChange={setManualProtein}
                 />
               </div>
             ) : null}
 
-            <Button
-              className="h-[52px] w-full rounded-xl border border-black bg-white text-[15px] font-semibold text-black"
-              onPress={complete}
-            >
-              Start tracking
-            </Button>
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <Button
+                className="h-[52px] rounded-xl border border-[#D4D4D8] bg-transparent text-black"
+                onPress={() => setStep(2)}
+              >
+                Back
+              </Button>
+              <Button
+                className="h-[52px] rounded-xl border border-black bg-white text-[15px] font-semibold text-black"
+                onPress={complete}
+              >
+                Start tracking
+              </Button>
+            </div>
           </section>
         ) : null}
       </div>
@@ -376,8 +596,8 @@ function parseHeightToInches(raw: string) {
   const text = raw
     .trim()
     .toLowerCase()
-    .replace(/[’′`]/g, "'")
-    .replace(/[″“”]/g, '"');
+    .replace(/[â€™â€²`]/g, "'")
+    .replace(/[â€³â€œâ€]/g, '"');
   if (!text) return 0;
 
   const feetInches = text.match(/^(\d+)\s*(?:'|ft|feet)\s*(\d{1,2})?\s*(?:"|in|inches)?$/);
@@ -433,6 +653,7 @@ function PillGroup({
         {options.map((opt) => (
           <button
             key={opt.key}
+            type="button"
             className={`rounded-full border px-4 py-2 text-sm ${
               value === opt.key
                 ? "border-black bg-black font-semibold text-white"
@@ -473,4 +694,78 @@ function SummaryCard({
       </CardBody>
     </Card>
   );
+}
+
+function buildTargetsRequest(input: {
+  age: number;
+  height_cm: number;
+  weight_kg: number;
+  biologicalSex: SexType | "";
+  lifestyle: LifestyleType | "";
+  goal: GoalType;
+  dietType: DietType | "";
+  stepsRange: OptionalStepRange;
+  trainingType: OptionalTrainingType;
+  strengthDays: OptionalStrengthDays;
+  goalPace: OptionalGoalPace;
+}): TargetsPlanInputs {
+  return {
+    age: input.age,
+    sex: mapSexLabel(input.biologicalSex),
+    height_cm: input.height_cm,
+    weight_kg: input.weight_kg,
+    lifestyle: mapLifestyleLabel(input.lifestyle),
+    goal: mapGoalLabel(input.goal),
+    diet_type: mapDietLabel(input.dietType),
+    ...(input.stepsRange ? { steps_range: input.stepsRange } : {}),
+    ...(input.trainingType ? { training_type: input.trainingType } : {}),
+    ...(input.strengthDays ? { strength_days: input.strengthDays } : {}),
+    ...(input.goalPace ? { goal_pace: input.goalPace } : {}),
+  };
+}
+
+function mapSexLabel(value: SexType | ""): TargetSexLabel {
+  switch (value) {
+    case "male":
+      return "Male";
+    case "female":
+      return "Female";
+    default:
+      return "Prefer not to say";
+  }
+}
+
+function mapLifestyleLabel(value: LifestyleType | ""): TargetLifestyleLabel {
+  switch (value) {
+    case "sedentary":
+      return "Mostly sitting";
+    case "light":
+      return "Light movement";
+    case "active":
+      return "Gym / Active";
+    default:
+      return "Very active";
+  }
+}
+
+function mapGoalLabel(value: GoalType): TargetGoalLabel {
+  switch (value) {
+    case "lose":
+      return "Lose weight";
+    case "gain":
+      return "Gain muscle";
+    default:
+      return "Stay fit";
+  }
+}
+
+function mapDietLabel(value: DietType | ""): TargetDietLabel {
+  switch (value) {
+    case "veg":
+      return "Vegetarian";
+    case "egg":
+      return "Eggetarian";
+    default:
+      return "Non-Vegetarian";
+  }
 }

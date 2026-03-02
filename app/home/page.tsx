@@ -1,31 +1,29 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Avatar, Button, Card, CardBody } from "@heroui/react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import BottomNav from "@/components/BottomNav";
 import RiaSheet from "@/components/ria/RiaSheet";
 import { getCatchUpSuggestions } from "@/lib/indianFoodDB";
-import { getProfile, getTodayLog, getWeeklyData, resetTodayLog, type NutriProfile } from "@/lib/storage";
+import { getProfile, getRemainingToday, getTodayLog, getWeeklyData, resetTodayLog, type NutriProfile } from "@/lib/storage";
 import { getWeeklyInsight } from "@/lib/weeklyReport";
 import { clamp, formatInt, getGreeting, getTodayReadable, isAfter2PM } from "@/lib/utils";
 
 export default function HomePage() {
   const router = useRouter();
-  const [profile, setProfile] = useState<NutriProfile | null>(null);
+  const [profile] = useState<NutriProfile | null>(() => getProfile());
   const [openChat, setOpenChat] = useState(false);
   const [toast, setToast] = useState("");
   const [expandWeek, setExpandWeek] = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0);
+  const [, setRefreshKey] = useState(0);
 
   useEffect(() => {
-    const p = getProfile();
-    if (!p?.setup_complete) {
+    if (!profile?.setup_complete) {
       router.replace("/onboarding");
-      return;
     }
-    setProfile(p);
-  }, [router]);
+  }, [profile, router]);
 
   useEffect(() => {
     if (!toast) return;
@@ -33,25 +31,31 @@ export default function HomePage() {
     return () => clearTimeout(t);
   }, [toast]);
 
-  const log = useMemo(() => getTodayLog(), [refreshKey]);
-  const weekly = useMemo(() => getWeeklyData(), [refreshKey]);
-  const insight = useMemo(() => getWeeklyInsight(), [refreshKey]);
-
   if (!profile) {
     return <main className="min-h-screen bg-white p-5 text-black">loading...</main>;
   }
 
-  const caloriesLeft = profile.daily_calorie_goal - log.totals.calories;
-  const proteinLeft = profile.daily_protein_goal - log.totals.protein_g;
+  const log = getTodayLog();
+  const remaining = getRemainingToday();
+  const weekly = getWeeklyData();
+  const insight = getWeeklyInsight();
   const budgetLeft = profile.daily_budget - log.totals.cost;
-
-  const calorieProgress = clamp(log.totals.calories / Math.max(1, profile.daily_calorie_goal), 0, 1.2);
+  const proteinLeft = profile.daily_protein_goal - log.totals.protein_g;
   const showCatchUp = isAfter2PM() && log.totals.protein_g < profile.daily_protein_goal * 0.4;
   const catchUps = getCatchUpSuggestions(
     Math.max(0, budgetLeft),
     profile.diet_type,
     log.meals.map((m) => m.name),
   );
+  const dailyTargets = profile.daily_targets_plan?.improved || {
+    calories_target: profile.daily_calorie_goal,
+    protein_min_g: profile.daily_protein_goal,
+    protein_optimal_g: profile.daily_protein_goal,
+    protein_per_meal_g: Math.round(profile.daily_protein_goal / 3),
+  };
+  const proteinMinimum = Math.round(profile.daily_protein_goal * 0.83);
+  const proteinOptimal = profile.daily_protein_goal;
+  const proteinConsumed = remaining.protein_consumed;
 
   const handleReset = () => {
     resetTodayLog();
@@ -80,46 +84,45 @@ export default function HomePage() {
         </header>
 
         <Card className="rounded-2xl border border-[#D4D4D8] bg-white shadow-none">
-          <CardBody className="p-5">
-            <div className="mb-4 flex items-center justify-between">
-              <p className="text-base font-semibold">Calories Today</p>
-              <p className="text-[13px] text-[#525252]">{Math.max(0, Math.round(caloriesLeft))} kcal left</p>
-            </div>
-            <Ring
-              value={log.totals.calories}
-              goal={profile.daily_calorie_goal}
-              over={log.totals.calories > profile.daily_calorie_goal}
-            />
-            <div className="mt-4 h-1.5 rounded-full bg-[#E5E7EB]">
-              <div
-                className="h-1.5 rounded-full transition-all duration-700"
-                style={{ width: `${Math.min(100, calorieProgress * 100)}%`, background: log.totals.calories > profile.daily_calorie_goal ? "#FF4444" : "#111111" }}
-              />
-            </div>
-            <div className="mt-2 flex justify-between text-[11px] text-[#525252]">
-              <span>0</span>
-              <span>{profile.daily_calorie_goal} kcal goal</span>
+          <CardBody className="space-y-4 p-5">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-base font-semibold">Daily Targets</p>
+                <p className="text-[13px] text-[#525252]">good day: hit minimum. best results: aim for optimal.</p>
+              </div>
+              {profile.daily_targets_plan?.improved_used ? (
+                <span className="rounded-full border border-black px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-black">
+                  better calculation
+                </span>
+              ) : null}
             </div>
 
-            <div className="mt-5 grid grid-cols-2 gap-3">
-              <MiniStat
-                title="protein"
-                primary={`${Math.round(log.totals.protein_g)}g`}
-                secondary={`${Math.max(0, Math.round(proteinLeft))}g left`}
-              />
-              <MiniStat
-                title="budget"
-                primary={`Rs${Math.round(log.totals.cost)}`}
-                secondary={`Rs${Math.max(0, Math.round(budgetLeft))} left`}
-                warn={budgetLeft < 0}
-              />
+            <div className="rounded-2xl border border-[#E5E7EB] bg-[#FAFAFA] p-4">
+              <p className="text-[11px] uppercase tracking-[0.12em] text-[#737373]">calories</p>
+              <p className="mt-1 text-3xl font-extrabold tabular-nums">{formatInt(dailyTargets.calories_target)} kcal/day</p>
             </div>
 
-            <div className="mt-4 grid grid-cols-3 divide-x divide-[#E5E7EB]">
-              <Macro value={`${Math.round(log.totals.protein_g)}g`} label="protein" />
-              <Macro value={`${Math.round(log.totals.carbs_g)}g`} label="carbs" />
-              <Macro value={`${Math.round(log.totals.fat_g)}g`} label="fat" />
+            <div className="rounded-2xl border border-[#E5E7EB] bg-[#FAFAFA] p-4">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-[11px] uppercase tracking-[0.12em] text-[#737373]">protein</p>
+                <p className="text-[11px] text-[#525252]">{formatInt(dailyTargets.protein_per_meal_g)}g per meal</p>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                <MiniStat title="minimum" primary={`${formatInt(proteinMinimum)}g`} secondary="hit this on a good day" />
+                <MiniStat title="optimal" primary={`${formatInt(proteinOptimal)}g`} secondary="best results target" />
+              </div>
+              <div className="mt-5">
+                <ProteinTracker
+                  consumed={proteinConsumed}
+                  minimum={proteinMinimum}
+                  optimal={proteinOptimal}
+                />
+              </div>
             </div>
+
+            {!profile.daily_targets_plan?.improved_used ? (
+              <p className="text-xs text-[#525252]">add activity details for better estimate (optional)</p>
+            ) : null}
           </CardBody>
         </Card>
 
@@ -211,7 +214,7 @@ export default function HomePage() {
         className="fixed bottom-28 right-5 z-40 flex h-16 w-16 items-center justify-center overflow-hidden rounded-full border-2 border-black bg-white shadow-[0_12px_30px_rgba(0,0,0,0.12)] transition hover:-translate-y-0.5"
         aria-label="Open Ria chat"
       >
-        <img src="/ria-doctor.svg" alt="Ria" className="h-full w-full object-cover" />
+        <Image src="/ria-doctor.svg" alt="Ria" width={64} height={64} className="h-full w-full object-cover" />
       </button>
 
       <BottomNav active="home" onToast={setToast} />
@@ -243,7 +246,7 @@ function MiniStat({
   warn?: boolean;
 }) {
   return (
-    <div className="rounded-2xl border border-[#E5E7EB] bg-[#FAFAFA] p-3">
+    <div className="rounded-2xl border border-[#E5E7EB] bg-white p-3">
       <p className="text-[11px] uppercase tracking-[0.12em] text-[#737373]">{title}</p>
       <p className={`mt-1 text-lg font-semibold ${warn ? "text-[#FF4444]" : "text-black"}`}>{primary}</p>
       <p className="text-xs text-[#525252]">{secondary}</p>
@@ -251,42 +254,108 @@ function MiniStat({
   );
 }
 
-function Ring({ value, goal, over }: { value: number; goal: number; over: boolean }) {
-  const size = 160;
-  const radius = 70;
-  const c = 2 * Math.PI * radius;
-  const pct = clamp(value / Math.max(1, goal), 0, 1);
-  return (
-    <div className="grid place-items-center">
-      <svg width={size} height={size}>
-        <circle cx={size / 2} cy={size / 2} r={radius} stroke="#E5E7EB" strokeWidth="12" fill="none" />
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          stroke={over ? "#FF4444" : "#111111"}
-          strokeWidth="12"
-          fill="none"
-          strokeDasharray={c}
-          strokeDashoffset={c * (1 - pct)}
-          transform={`rotate(-90 ${size / 2} ${size / 2})`}
-          strokeLinecap="round"
-          style={{ transition: "stroke-dashoffset 800ms ease-out" }}
-        />
-      </svg>
-      <div className="-mt-[104px] text-center">
-        <p className="text-3xl font-extrabold tabular-nums">{formatInt(value)}</p>
-        <p className="text-[11px] uppercase tracking-[0.5px] text-[#525252]">consumed</p>
-      </div>
-    </div>
-  );
-}
+function ProteinTracker({
+  consumed,
+  minimum,
+  optimal,
+}: {
+  consumed: number;
+  minimum: number;
+  optimal: number;
+}) {
+  const optimalColor = "#8FBFA1";
+  const maxValue = optimal + 10;
+  const consumedClamped = clamp(consumed, 0, maxValue);
+  const fillColor =
+    consumed >= optimal ? optimalColor : consumed >= minimum ? "#FFFFFF" : "#888888";
+  const consumedPct = (consumedClamped / Math.max(1, maxValue)) * 100;
+  const minimumPct = (minimum / Math.max(1, maxValue)) * 100;
+  const optimalPct = (optimal / Math.max(1, maxValue)) * 100;
+  const minimumToOptimalPct = ((optimal - minimum) / Math.max(1, maxValue)) * 100;
+  const remainingAfterOptimalPct = Math.max(0, 100 - optimalPct);
 
-function Macro({ value, label }: { value: string; label: string }) {
+  let statusText = "Start eating - log your first meal to track protein";
+  let statusColor = "#555555";
+
+  if (consumed > 0 && consumed < minimum) {
+    statusText = `${formatInt(consumed)}g consumed  ${formatInt(minimum - consumed)}g to hit minimum`;
+    statusColor = "#888888";
+  } else if (consumed >= minimum && consumed < optimal) {
+    statusText = `Minimum hit  ${formatInt(optimal - consumed)}g more for best results`;
+    statusColor = "#FFFFFF";
+  } else if (consumed >= optimal) {
+    statusText = "Optimal protein hit today!";
+    statusColor = optimalColor;
+  }
+
   return (
-    <div className="px-2 text-center">
-      <p className="font-semibold tabular-nums">{value}</p>
-      <p className="text-xs text-[#525252]">{label}</p>
+    <div>
+      <div className="relative h-[58px] w-full overflow-visible">
+        <div className="absolute left-0 top-[34px] h-[10px] w-full -translate-y-1/2 overflow-hidden rounded-[99px] bg-[#1A1A1A]">
+          <div className="h-full bg-[#2A2A2A]" style={{ width: `${minimumPct}%` }} />
+          <div
+            className="absolute top-0 h-full bg-[#3A3A3A]"
+            style={{ left: `${minimumPct}%`, width: `${minimumToOptimalPct}%` }}
+          />
+          <div
+            className="absolute right-0 top-0 h-full bg-[#1A1A1A]"
+            style={{ width: `${remainingAfterOptimalPct}%` }}
+          />
+          <div
+            className="absolute left-0 top-0 h-full rounded-[99px]"
+            style={{
+              width: `${consumedPct}%`,
+              background: fillColor,
+              transition: "width 500ms ease, background-color 500ms ease",
+            }}
+          />
+        </div>
+
+        <div
+          className="absolute top-1/2 z-10 w-[2px] -translate-x-1/2 -translate-y-1/2 bg-white"
+          style={{ left: `${minimumPct}%`, top: "34px", height: "22px" }}
+        />
+        <div
+          className="absolute top-1/2 z-10 w-[2px] -translate-x-1/2 -translate-y-1/2"
+          style={{ left: `${optimalPct}%`, top: "34px", height: "22px", backgroundColor: optimalColor }}
+        />
+
+        <div
+          className="absolute z-20"
+          style={{ left: `${consumedPct}%`, top: "34px", transition: "left 500ms ease" }}
+        >
+          <div
+            className="absolute left-1/2 top-[-34px] whitespace-nowrap rounded-[4px] bg-[#222222] px-[6px] py-[2px] text-[11px] font-bold text-white"
+            style={{ transform: "translateX(-50%)" }}
+          >
+            {formatInt(consumed)}g
+          </div>
+          <div
+            className="absolute left-1/2 top-1/2 h-[14px] w-[14px] rounded-full border-2"
+            style={{
+              transform: "translate(-50%, -50%)",
+              borderColor: "#0A0A0A",
+              background: fillColor,
+              transition: "background-color 500ms ease",
+            }}
+          />
+        </div>
+      </div>
+
+      <div className="relative mt-[10px] h-4 text-[11px] text-[#555555]">
+        <span className="absolute left-0 top-0">0g</span>
+        <span className="absolute top-0 -translate-x-1/2 text-[10px] uppercase tracking-[0.12em] text-[#888888]" style={{ left: `${minimumPct}%` }}>
+          MIN
+        </span>
+        <span className="absolute top-0 -translate-x-1/2 text-[10px] uppercase tracking-[0.12em]" style={{ left: `${optimalPct}%`, color: optimalColor }}>
+          OPT
+        </span>
+        
+      </div>
+
+      <p className="mt-2 text-[13px] leading-[1.4]" style={{ color: statusColor }}>
+        {statusText}
+      </p>
     </div>
   );
 }

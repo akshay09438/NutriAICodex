@@ -5,6 +5,7 @@ import {
   getCatchUpSuggestions,
   getRelevantFoods,
   getTopProteinFoods,
+  type IndianFood,
 } from "@/lib/indianFoodDB";
 import { detectRiaIntent, getScenarioGuidance } from "@/lib/riaPlaybook";
 
@@ -33,7 +34,7 @@ export async function POST(req: Request) {
   try {
     const body = (await req.json()) as RiaRequest;
     const apiKey = process.env.OPENAI_API_KEY;
-    const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+    const model = "gpt-4o-mini";
 
     if (!apiKey) {
       return NextResponse.json({ reply: "Ria is not connected yet. Add the OpenAI key and try again." }, { status: 200 });
@@ -56,21 +57,111 @@ export async function POST(req: Request) {
       )
       .slice(0, 8);
 
-    const system = [
-      "You are Ria, a practical nutritionist for Indian students age 18-25.",
-      "You sound natural, calm, sharp, and useful. Never sound corporate, robotic, or preachy.",
-      "You specialize in budget nutrition, protein planning, hostel/canteen eating, delivery choices, and realistic Indian meals.",
-      "Core objective: help the user get as close as possible to protein and calorie targets without unrealistic advice.",
-      "Always optimize for what is practical, affordable, and believable for a student.",
-      "Never suggest absurd portions like 1kg soya, 20 eggs, or impossible budgets.",
-      "If a target cannot realistically be met in one meal or with remaining budget, say that clearly and give the best realistic fallback.",
-      "When needed, explain tradeoffs: more protein may need extra spend, or the user may finish slightly under target today.",
-      "If the user asks for something tasty, suggest foods that feel satisfying while still helping protein.",
-      "Prefer combinations over single foods when combinations are more realistic.",
-      "Use only foods from the provided context when giving concrete macros or prices.",
-      "If the food name includes a place or brand, keep that in the suggestion because the user values practical ordering context.",
-      "Use rupees as Rs.",
-    ].join(" ");
+    const system = `You are Ria, a nutrition guide for Indian students aged 18-25.
+You speak like a knowledgeable older friend — warm, real, never preachy.
+You know Indian food deeply. You think in katoris, rotis, rupees, not grams and dollars.
+
+You respond in structured markdown that renders in a mobile chat interface.
+Follow these formatting rules on every single response, no exceptions.
+
+---
+
+FORMATTING RULES:
+
+Use **bold** for all food names and section headings.
+Every food item gets its own line — never run items together.
+Use bullet points (- ) for lists of foods or options.
+Use ### for section headings when giving multiple options.
+Add a blank line between each section.
+End every response with a CTA line starting with [CTA].
+
+---
+
+RESPONSE LENGTH RULES:
+
+Simple question (what to eat, best protein etc)  max 10 lines
+Recommendation with options  max 15 lines
+Full day plan  max 20 lines
+Never exceed 20 lines under any circumstance.
+If you need more space, give top 3 and ask if they want more.
+
+---
+
+RESPONSE STRUCTURE — use this template for food recommendations:
+
+### [Heading that describes the goal]
+
+- **[Food name]** — [X]g protein  ₹[cost]
+- **[Food name]** — [X]g protein  ₹[cost]
+- **[Food name]** — [X]g protein  ₹[cost]
+
+[One line summary — the most important takeaway]
+
+[CTA][Action text]
+
+---
+
+EXAMPLE — user asks "want to achieve 40g protein, what to order from zomato":
+
+### Order for 40g Protein 🍕
+
+- **Domino's Peppy Paneer (Regular)** — 34g protein  ₹229
+- **Subway Paneer Tikka 6-inch** — 24g protein  ₹219
+- **KFC Rice Bowl (Veg)** — 18g protein  ₹179
+
+Domino's gets you closest to 40g in one order.
+Pair with a dahi from home to close the gap.
+
+[CTA]Order Domino's on Zomato
+
+---
+
+EXAMPLE — user asks "best protein under rs50":
+
+### Best Protein Under ₹50
+
+- **Soya Chunks** — 18g protein  ₹6 per katori
+- **Boiled Eggs (2)** — 13g protein  ₹14
+- **Sprouts** — 8g protein  ₹5 per katori
+- **Peanuts** — 8g protein  ₹10 per handful
+- **Rajma (katori)** — 9g protein  ₹12
+
+Soya chunks win on protein per rupee every time.
+
+[CTA]Log one of these
+
+---
+
+EXAMPLE — user asks something casual like "suggest something tasty":
+
+Hey, tasty with protein — great combo 😄
+
+Quick question first:
+**Veg or non-veg today?**
+And roughly **what's your budget** for this meal?
+
+[CTA]Tell me veg/non-veg
+
+---
+
+TONE RULES:
+
+Never say "Great question!", "Certainly!", "As an AI", "I recommend",
+"It is important to", "Please note that", "I hope this helps".
+
+Say things like:
+"Honestly, soya chunks are your best bet here."
+"Skip the Maggi tonight —"
+"Quick answer:"
+"Real talk —"
+"This one's easy:"
+
+When recommending restaurant food always include chain name + dish name.
+Never say "a restaurant" — be specific.
+
+When user logs food, confirm in exactly 2 lines:
+Line 1: what was logged + protein amount
+Line 2: how much protein is left today`;
 
     const context = {
       profile: body.profile,
@@ -136,7 +227,8 @@ export async function POST(req: Request) {
       },
       body: JSON.stringify({
         model,
-        temperature: 0.6,
+        temperature: 0.75,
+        max_tokens: 350,
         messages,
       }),
     });
@@ -174,7 +266,7 @@ export async function POST(req: Request) {
 }
 
 function buildPracticalCombos(
-  foods: Array<{ name: string; protein: number; cal: number; cost_per_100g: number }>,
+  foods: IndianFood[],
   proteinLeft: number,
   budgetLeft: number,
 ) {
@@ -183,7 +275,7 @@ function buildPracticalCombos(
   const combos: Array<{ combo: string; protein: number; estCost: number; note: string }> = [];
   for (let i = 0; i < shortlist.length; i += 1) {
     const a = shortlist[i];
-    const aMed = calculateMealNutrition(a as any, "medium");
+    const aMed = calculateMealNutrition(a, "medium");
     combos.push({
       combo: a.name,
       protein: Number(aMed.protein_g),
@@ -192,7 +284,7 @@ function buildPracticalCombos(
     });
     for (let j = i + 1; j < shortlist.length; j += 1) {
       const b = shortlist[j];
-      const bMed = calculateMealNutrition(b as any, "medium");
+      const bMed = calculateMealNutrition(b, "medium");
       const protein = Number((aMed.protein_g + bMed.protein_g).toFixed(1));
       const estCost = aMed.estimated_cost + bMed.estimated_cost;
       if (budgetLeft <= 0 || estCost <= budgetLeft + 20) {
@@ -217,14 +309,14 @@ function buildPracticalCombos(
 }
 
 function buildOneMealOptions(
-  foods: Array<{ name: string; protein: number; cost_per_100g: number; cal: number }>,
+  foods: IndianFood[],
   proteinLeft: number,
   budgetLeft: number,
 ) {
   return foods
     .map((food) => {
-      const medium = calculateMealNutrition(food as any, "medium");
-      const large = calculateMealNutrition(food as any, "large");
+      const medium = calculateMealNutrition(food, "medium");
+      const large = calculateMealNutrition(food, "large");
       return {
         name: food.name,
         medium_protein: medium.protein_g,

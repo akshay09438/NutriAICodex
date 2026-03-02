@@ -1,5 +1,6 @@
 import { format } from "date-fns";
 import type { GoalType, LifestyleType, SexType } from "@/lib/calculations";
+import type { TargetsPlanV1 } from "@/services/targets_v1";
 
 export type DietType = "veg" | "egg" | "nonveg";
 
@@ -18,6 +19,7 @@ export type NutriProfile = {
   pre_activity_snack_budget: number;
   daily_calorie_goal: number;
   daily_protein_goal: number;
+  daily_targets_plan?: TargetsPlanV1 | null;
   setup_complete: boolean;
   created_at: string;
 };

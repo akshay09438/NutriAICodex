@@ -20,25 +20,13 @@ const quick = ["eggs", "paneer", "soya chunks", "chicken", "dal rice", "roti", "
 
 export default function LogMealPage() {
   const router = useRouter();
-  const [query, setQuery] = useState("");
-  const [selected, setSelected] = useState<IndianFood | null>(null);
+  const [query, setQuery] = useState(() => {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("food") || "";
+  });
   const [size, setSize] = useState<MealSize>("medium");
   const [cost, setCost] = useState("");
   const [toast, setToast] = useState("");
-
-  useEffect(() => {
-    const url = new URL(window.location.href);
-    const food = url.searchParams.get("food");
-    if (food) {
-      setQuery(food);
-      setSelected(searchFood(food));
-    }
-  }, []);
-
-  useEffect(() => {
-    if (query.trim().length < 2) return;
-    setSelected(searchFood(query));
-  }, [query]);
 
   useEffect(() => {
     if (!toast) return;
@@ -46,6 +34,10 @@ export default function LogMealPage() {
     return () => clearTimeout(t);
   }, [toast]);
 
+  const selected = useMemo<IndianFood | null>(() => {
+    if (query.trim().length < 2) return null;
+    return searchFood(query);
+  }, [query]);
   const nutrition = useMemo(() => (selected ? calculateMealNutrition(selected, size) : null), [selected, size]);
 
   const save = () => {
@@ -95,10 +87,7 @@ export default function LogMealPage() {
               key={q}
               type="button"
               className="rounded-lg border border-[#D4D4D8] bg-white px-3 py-2 text-sm text-black"
-              onClick={() => {
-                setQuery(q);
-                setSelected(searchFood(q));
-              }}
+              onClick={() => setQuery(q)}
             >
               {q}
             </button>

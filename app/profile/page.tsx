@@ -7,33 +7,25 @@ import BottomNav from "@/components/BottomNav";
 import { getProfile, getTodayLog, getWeeklyData, resetTodayLog, type NutriProfile } from "@/lib/storage";
 import { formatInt, getTodayReadable } from "@/lib/utils";
 
+type ProfileStats = {
+  todayCalories: number;
+  todayProtein: number;
+  todayBudget: number;
+  goalHitCount: number;
+  avgProtein: number;
+};
+
 export default function ProfilePage() {
   const router = useRouter();
-  const [profile, setProfile] = useState<NutriProfile | null>(null);
-  const [todayCalories, setTodayCalories] = useState(0);
-  const [todayProtein, setTodayProtein] = useState(0);
-  const [todayBudget, setTodayBudget] = useState(0);
-  const [goalHitCount, setGoalHitCount] = useState(0);
-  const [avgProtein, setAvgProtein] = useState(0);
+  const [profile] = useState<NutriProfile | null>(() => getProfile());
+  const [stats, setStats] = useState<ProfileStats>(() => readStats());
   const [toast, setToast] = useState("");
 
   useEffect(() => {
-    const savedProfile = getProfile();
-    if (!savedProfile?.setup_complete) {
+    if (!profile?.setup_complete) {
       router.replace("/onboarding");
-      return;
     }
-
-    const today = getTodayLog();
-    const weekly = getWeeklyData();
-
-    setProfile(savedProfile);
-    setTodayCalories(today.totals.calories);
-    setTodayProtein(today.totals.protein_g);
-    setTodayBudget(today.totals.cost);
-    setGoalHitCount(weekly.goal_hit_count);
-    setAvgProtein(weekly.avg_protein);
-  }, [router]);
+  }, [profile, router]);
 
   useEffect(() => {
     if (!toast) return;
@@ -41,19 +33,9 @@ export default function ProfilePage() {
     return () => clearTimeout(timer);
   }, [toast]);
 
-  const refreshStats = () => {
-    const today = getTodayLog();
-    const weekly = getWeeklyData();
-    setTodayCalories(today.totals.calories);
-    setTodayProtein(today.totals.protein_g);
-    setTodayBudget(today.totals.cost);
-    setGoalHitCount(weekly.goal_hit_count);
-    setAvgProtein(weekly.avg_protein);
-  };
-
   const handleResetToday = () => {
     resetTodayLog();
-    refreshStats();
+    setStats(readStats());
     setToast("today got cleared");
   };
 
@@ -61,9 +43,9 @@ export default function ProfilePage() {
     return <main className="min-h-screen bg-white p-5 text-black">loading...</main>;
   }
 
-  const caloriePct = Math.min(100, Math.round((todayCalories / Math.max(1, profile.daily_calorie_goal)) * 100));
-  const proteinPct = Math.min(100, Math.round((todayProtein / Math.max(1, profile.daily_protein_goal)) * 100));
-  const budgetPct = Math.min(100, Math.round((todayBudget / Math.max(1, profile.daily_budget)) * 100));
+  const caloriePct = Math.min(100, Math.round((stats.todayCalories / Math.max(1, profile.daily_calorie_goal)) * 100));
+  const proteinPct = Math.min(100, Math.round((stats.todayProtein / Math.max(1, profile.daily_protein_goal)) * 100));
+  const budgetPct = Math.min(100, Math.round((stats.todayBudget / Math.max(1, profile.daily_budget)) * 100));
 
   return (
     <main className="min-h-screen bg-white px-5 pb-28 pt-6 text-black">
@@ -113,9 +95,9 @@ export default function ProfilePage() {
               </Button>
             </div>
 
-            <ProgressRow label="calories" value={`${formatInt(todayCalories)} / ${formatInt(profile.daily_calorie_goal)} kcal`} pct={caloriePct} />
-            <ProgressRow label="protein" value={`${formatInt(todayProtein)} / ${formatInt(profile.daily_protein_goal)} g`} pct={proteinPct} />
-            <ProgressRow label="budget" value={`Rs${formatInt(todayBudget)} / Rs${formatInt(profile.daily_budget)}`} pct={budgetPct} />
+            <ProgressRow label="calories" value={`${formatInt(stats.todayCalories)} / ${formatInt(profile.daily_calorie_goal)} kcal`} pct={caloriePct} />
+            <ProgressRow label="protein" value={`${formatInt(stats.todayProtein)} / ${formatInt(profile.daily_protein_goal)} g`} pct={proteinPct} />
+            <ProgressRow label="budget" value={`Rs${formatInt(stats.todayBudget)} / Rs${formatInt(profile.daily_budget)}`} pct={budgetPct} />
           </CardBody>
         </Card>
 
@@ -123,8 +105,8 @@ export default function ProfilePage() {
           <CardBody className="space-y-3 p-5">
             <p className="text-base font-semibold">this week</p>
             <div className="grid grid-cols-2 gap-3">
-              <Fact label="protein goal hit" value={`${goalHitCount} / 7 days`} />
-              <Fact label="avg protein" value={`${formatInt(avgProtein)} g`} />
+              <Fact label="protein goal hit" value={`${stats.goalHitCount} / 7 days`} />
+              <Fact label="avg protein" value={`${formatInt(stats.avgProtein)} g`} />
             </div>
           </CardBody>
         </Card>
@@ -139,6 +121,18 @@ export default function ProfilePage() {
       ) : null}
     </main>
   );
+}
+
+function readStats(): ProfileStats {
+  const today = getTodayLog();
+  const weekly = getWeeklyData();
+  return {
+    todayCalories: today.totals.calories,
+    todayProtein: today.totals.protein_g,
+    todayBudget: today.totals.cost,
+    goalHitCount: weekly.goal_hit_count,
+    avgProtein: weekly.avg_protein,
+  };
 }
 
 function Fact({ label, value }: { label: string; value: string }) {
